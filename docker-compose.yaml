@@ -29,6 +29,7 @@ services:
       # Portal container reaches GitLab on the host port, then triggers tenant_orchestrator.
       GITLAB_BASE_URL: http://host.docker.internal:8929
       GITLAB_PROJECT_ID: root/tenant_orchestrator
+      GITLAB_TENANTS_GROUP: tenants
       # Browser link shown after a successful launch. localhost, not the container API host.
       GITLAB_ORCHESTRATOR_PIPELINES_URL: http://localhost:8929/root/tenant_orchestrator/-/pipelines
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080

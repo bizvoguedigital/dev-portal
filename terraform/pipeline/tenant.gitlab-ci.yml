@@ -1,0 +1,76 @@
+# Included by every tenant repo. Prints the variables the dev portal sent,
+# then starts the matching project in the Ops group and hands it this tenant's
+# terraform.tfvars.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: never
+    - when: always
+
+stages:
+  - show
+  - trigger
+
+portal-variables:
+  stage: show
+  image: alpine:3.20
+  script:
+    - echo "Hello from ${CI_PROJECT_PATH}"
+    - echo "TARGET_ENV=${TARGET_ENV}"
+    - echo "TENANT_LIST=${TENANT_LIST}"
+    - echo "DEPLOY_ALL=${DEPLOY_ALL}"
+    - echo "PIPELINE_TRIGGER=${PIPELINE_TRIGGER}"
+    - echo "TAINT=${TAINT}"
+    - echo "TRIGGERED_BY=${TRIGGERED_BY}"
+    - echo "CR_NUMBER=${CR_NUMBER}"
+    - echo "DRY_RUN=${DRY_RUN}"
+    - echo "REPLACE_RESOURCE=${REPLACE_RESOURCE}"
+    - echo "TF_REFRESH=${TF_REFRESH}"
+    - echo "REPLACE_STATE=${REPLACE_STATE}"
+    - echo "SERVICES_LIST=${SERVICES_LIST}"
+    - echo "SINGLE_SERVICE_DEPLOY=${SINGLE_SERVICE_DEPLOY}"
+    - echo "SELECTED_SERVICE=${SELECTED_SERVICE}"
+    - echo "----- tenant tfvars -----"
+    - cat terraform.tfvars
+
+.trigger-ops:
+  stage: trigger
+  variables:
+    TENANT_PROJECT_PATH: $CI_PROJECT_PATH
+    TENANT_PROJECT_ID: $CI_PROJECT_ID
+
+trigger-tenant-baseline:
+  extends: .trigger-ops
+  rules:
+    - if: '$PIPELINE_TRIGGER == "tenant_baseline"'
+  trigger:
+    project: Ops/tenant_baseline
+    branch: main
+    strategy: depend
+    forward:
+      yaml_variables: true
+      pipeline_variables: true
+
+trigger-tenant-services:
+  extends: .trigger-ops
+  rules:
+    - if: '$PIPELINE_TRIGGER == "tenant_services"'
+  trigger:
+    project: Ops/tenant_services
+    branch: main
+    strategy: depend
+    forward:
+      yaml_variables: true
+      pipeline_variables: true
+
+trigger-kasm-vdi:
+  extends: .trigger-ops
+  rules:
+    - if: '$PIPELINE_TRIGGER == "kasm_vdi"'
+  trigger:
+    project: Ops/Kasm_VDI
+    branch: main
+    strategy: depend
+    forward:
+      yaml_variables: true
+      pipeline_variables: true

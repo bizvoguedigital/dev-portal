@@ -1,0 +1,6 @@
+# Tenant repo entry. The routing, the variable log, and the tfvars hand-off
+# live in ci-templates/pipelines so every tenant stays on the same file.
+include:
+  - project: ci-templates/pipelines
+    ref: main
+    file: /tenant.gitlab-ci.yml

@@ -8,6 +8,8 @@ class Config:
     # to the tenant projects. A numeric id also works if set in the environment.
     GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "http://host.docker.internal:8929")
     GITLAB_PROJECT_ID = os.getenv("GITLAB_PROJECT_ID", "root/tenant_orchestrator")
+    # Group whose projects, including subgroups, are the selectable tenants.
+    GITLAB_TENANTS_GROUP = os.getenv("GITLAB_TENANTS_GROUP", "tenants").strip().strip("/") or "tenants"
 
     # Computed API URL. The project path is encoded so the slash survives.
     GITLAB_PROJECT_API = (

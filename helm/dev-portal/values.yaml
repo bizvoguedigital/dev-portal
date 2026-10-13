@@ -25,6 +25,8 @@ portal:
   gitlab:
     baseUrl: ""
     projectId: root/tenant_orchestrator
+    # GitLab group whose projects, including subgroups, fill the tenant picker.
+    tenantsGroup: tenants
     # Browser link in the launch popup. Leave empty to keep the config.py default.
     pipelinesUrl: ""
   # Single SQLite file. Do not raise this above 1.

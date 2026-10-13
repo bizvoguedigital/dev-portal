@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app import startup
 from config import Config
-from gitlab_client import get_pipeline_status, trigger_pipeline
+from gitlab_client import fetch_skip_list, get_pipeline_status, list_tenant_paths, trigger_pipeline
+from skip_list import format_skipped, parse_skip_list, partition_tenants
 from logging_utils import audit_log, logger
 from model import DeploymentRequest
 from releases_store import (
@@ -29,16 +30,18 @@ _RESERVATION_TTL = timedelta(minutes=3)
 
 
 def _change_summary(req: DeploymentRequest) -> str:
-    if not req.taint:
-        return ""
-    if req.pipelineTrigger == "tenant_baseline":
+    if req.pipelineTrigger == "tenant_baseline" and req.taint:
         refresh = "refresh" if req.tfRefresh else "no-refresh"
-        return f"replace {req.replaceResource} ({refresh})"
-    if req.pipelineTrigger == "kasm_vdi":
-        return f"replace state {req.replaceState}"
-    if req.pipelineTrigger == "tenant_services":
-        return "services " + ",".join(req.services or [])
-    return ""
+        detail = f"replace {req.replaceResource} ({refresh})"
+    elif req.pipelineTrigger == "kasm_vdi" and req.taint:
+        detail = f"replace state {req.replaceState}"
+    elif req.pipelineTrigger == "tenant_services" and req.taint:
+        detail = "services " + ",".join(req.services or [])
+    else:
+        detail = ""
+    if req.dryRun:
+        return "terraform plan" if not detail else f"terraform plan; {detail}"
+    return detail
 
 
 def _pipeline_id(gitlab_response: object) -> int | None:
@@ -104,15 +107,45 @@ async def trigger_deployment(req: DeploymentRequest, request: Request):
         username=username,
         detail=(
             f"env={req.targetEnvironment} trigger={req.pipelineTrigger} "
-            f"tenants={req.tenantList} taint={req.taint} cr={req.crNumber or '-'}"
+            f"tenants={req.tenantList} taint={req.taint} "
+            f"singleService={req.selectedService or '-'} dryRun={req.dryRun} cr={req.crNumber or '-'}"
         ),
     )
     reservation = None
     gitlab_response = None
     pipeline_id = None
     try:
+        known = set(await list_tenant_paths(startup.gitlab_token))
+        deploy_all = req.tenantList == "*"
+        skipped_text = ""
+        if deploy_all:
+            rules = parse_skip_list(await fetch_skip_list(startup.gitlab_token)).get(req.targetEnvironment, {})
+            running, skipped = partition_tenants(sorted(known), rules)
+            if not running:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Every tenant is on the skip list for {req.targetEnvironment}.",
+                )
+            gitlab_tenant_list = ",".join(running)
+            ledger_tenant_list = "all"
+            skipped_text = format_skipped(skipped)
+        else:
+            missing = [name for name in req.tenantList.split(",") if name not in known]
+            if missing:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Unknown tenant: " + ", ".join(missing) + ". Choose a tenant from the list.",
+                )
+            gitlab_tenant_list = req.tenantList
+            ledger_tenant_list = req.tenantList
         reservation = await _ensure_environment_available(req.targetEnvironment)
-        gitlab_response = await trigger_pipeline(startup.gitlab_token, req, username)
+        gitlab_response = await trigger_pipeline(
+            startup.gitlab_token,
+            req,
+            username,
+            gitlab_tenant_list,
+            deploy_all,
+        )
         pipeline_id = _pipeline_id(gitlab_response)
         held = True
         if pipeline_id:
@@ -122,14 +155,16 @@ async def trigger_deployment(req: DeploymentRequest, request: Request):
         record_release(
             username=username,
             environment=req.targetEnvironment,
-            tenant_list=req.tenantList,
+            tenant_list=ledger_tenant_list,
             pipeline_trigger=req.pipelineTrigger,
             taint=req.taint,
             cr_number=req.crNumber,
+            dry_run=req.dryRun,
             change_summary=_change_summary(req),
             gitlab_pipeline_id=pipeline_id,
             gitlab_web_url=web_url if isinstance(web_url, str) else None,
             pipeline_status=pipeline_status or "created",
+            skipped_tenants=skipped_text,
         )
         if pipeline_id and not held:
             raise HTTPException(

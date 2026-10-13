@@ -6,6 +6,23 @@ output "tenant_orchestrator" {
   }
 }
 
+output "car_mark_count" {
+  description = "Number of CARs/<brand>/<mark> projects."
+  value       = length(gitlab_project.car_mark)
+}
+
+output "ops_projects" {
+  description = "Pipelines a tenant starts after the portal trigger arrives."
+  value = {
+    for name, project in gitlab_project.ops : name => project.web_url
+  }
+}
+
+output "ci_template" {
+  description = "Shared file included by every tenant .gitlab-ci.yml."
+  value       = "${gitlab_project.ci_template.web_url}/-/blob/main/tenant.gitlab-ci.yml"
+}
+
 output "tenant_projects" {
   description = "Downstream projects started by the CI file tenant_orchestrator generates."
   value = {

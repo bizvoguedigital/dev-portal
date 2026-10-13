@@ -143,7 +143,7 @@
         <div class="mb-8">
             <p class="text-[11px] font-medium uppercase tracking-[0.16em] text-blue-700">New release</p>
             <h1 class="mt-2 text-[1.75rem] font-semibold tracking-tight">Trigger a pipeline</h1>
-            <p class="mt-2 text-sm leading-relaxed text-stone-600">Choose the environment, the tenants, and the pipeline. Production stays locked until you confirm it and attach a change request.</p>
+            <p class="mt-2 text-sm leading-relaxed text-stone-600">Choose the environment, the tenants, and the pipeline. On production, leave the confirmation off for a dry run that only plans. Check it and attach a change request when you intend to ship.</p>
         </div>
 
         <form id="deployForm" class="rounded-2xl border border-stone-200 bg-white shadow-[0_1px_2px_rgba(28,25,23,0.04)]">
@@ -169,7 +169,7 @@
                         <input type="checkbox" id="allowProd" class="mt-0.5 h-4 w-4 rounded border-rose-300 text-rose-700 focus:ring-rose-600">
                         <label for="allowProd" class="text-sm text-stone-800">
                             <span class="font-medium">Allow this production trigger</span>
-                            <span class="mt-0.5 block text-stone-500">Required in addition to the change request. Leave this off unless you intend to ship.</span>
+                            <span class="mt-0.5 block text-stone-500">Leave this off to run a dry run. That only runs terraform plan and does not change production. Check it, and add a change request, when you intend to ship.</span>
                         </label>
                     </div>
                     <div id="crRow" class="hidden">
@@ -182,10 +182,18 @@
                 </div>
 
                 <div>
-                    <label for="tenantList" class="block text-sm font-medium text-stone-900">Tenants</label>
-                    <input type="text" id="tenantList" required placeholder="atlas, borealis"
-                           class="mt-2 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm outline-none placeholder:text-stone-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-700/15">
-                    <p class="mt-2 text-xs text-stone-500">Comma-separated list of tenants in this release.</p>
+                    <span id="tenantLabel" class="block text-sm font-medium text-stone-900">Tenants</span>
+                    <button type="button" id="tenantPicker" aria-expanded="false" aria-controls="tenantMenu"
+                            class="mt-2 flex w-full items-center justify-between rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-left text-sm outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-700/15">
+                        <span id="tenantPickerText" class="truncate text-stone-900">All tenants</span>
+                        <span aria-hidden="true" class="ml-3 text-stone-400">▾</span>
+                    </button>
+                    <div id="tenantMenu" class="mt-2 hidden rounded-xl border border-stone-200 bg-stone-50 p-3">
+                        <input type="search" id="tenantFilter" placeholder="Filter by brand or mark" autocomplete="off"
+                               class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-700/15">
+                        <div id="tenantOptions" class="mt-3 max-h-64 space-y-3 overflow-y-auto" role="group" aria-labelledby="tenantLabel"></div>
+                    </div>
+                    <p id="tenantHelp" class="mt-2 text-xs text-stone-500">Leave every box unchecked to release all tenants except the ones skipped for this environment. A hand-picked release can include at most 20.</p>
                 </div>
 
                 <div>
@@ -198,12 +206,33 @@
                     </select>
                 </div>
 
-                <div class="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                <div id="singleServicePanel" class="hidden rounded-xl border border-stone-200 p-4">
                     <div class="flex items-start gap-3">
-                        <input type="checkbox" id="taintFlag" class="mt-0.5 h-4 w-4 rounded border-amber-300 text-amber-700 focus:ring-amber-600">
-                        <label for="taintFlag" class="text-sm text-stone-800">
-                            <span class="font-medium">Replace existing resources</span>
-                            <span class="mt-0.5 block text-stone-500">Taint the selected Terraform resources so the pipeline destroys and recreates them.</span>
+                        <input type="checkbox" id="singleServiceDeploy" class="mt-0.5 h-4 w-4 rounded border-stone-300 text-blue-700 focus:ring-blue-700">
+                        <label for="singleServiceDeploy" class="text-sm text-stone-800">
+                            <span class="font-medium">Deploy a single service</span>
+                            <span class="mt-0.5 block text-stone-500">Leave this off to deploy every service.</span>
+                        </label>
+                    </div>
+                    <div id="singleServiceRow" class="mt-4 hidden border-t border-stone-200 pt-4">
+                        <label for="selectedService" class="block text-sm font-medium text-stone-900">Service</label>
+                        <select id="selectedService" class="mt-2 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-700/15">
+                            <option value="" disabled selected>Select a service</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="rounded-xl border border-red-300 bg-red-50 p-4">
+                    <div class="flex items-start gap-3">
+                        <input type="checkbox" id="taintFlag" class="mt-1 h-4 w-4 rounded border-red-400 text-red-700 focus:ring-red-600">
+                        <label for="taintFlag" class="flex items-start gap-2 text-sm text-red-950">
+                            <svg class="mt-0.5 h-5 w-5 shrink-0 text-red-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                            </svg>
+                            <span>
+                                <span class="font-medium">Replace existing resources</span>
+                                <span class="mt-0.5 block text-red-800">Danger. Taint the selected Terraform resources so the pipeline destroys and recreates them.</span>
+                            </span>
                         </label>
                     </div>
 
@@ -300,6 +329,19 @@
 
         const services = ['airflow', 'cloudbeaver', 'gitlab_runner', 'immuta', 'jupyterhub', 'mlflow', 's3uploader', 'superset'];
         const servicesGrid = document.getElementById('servicesGrid');
+        const selectedService = document.getElementById('selectedService');
+        services.forEach(service => {
+            const option = document.createElement('option');
+            option.value = service;
+            option.textContent = service.replace('_', ' ');
+            selectedService.appendChild(option);
+        });
+        const singleServicePanel = document.getElementById('singleServicePanel');
+        const singleServiceDeploy = document.getElementById('singleServiceDeploy');
+        const singleServiceRow = document.getElementById('singleServiceRow');
+        singleServiceDeploy.addEventListener('change', () => {
+            singleServiceRow.classList.toggle('hidden', !singleServiceDeploy.checked);
+        });
 
         services.forEach(service => {
             const div = document.createElement('label');
@@ -324,6 +366,13 @@
             sectionBaseline.classList.add('hidden');
             sectionKasm.classList.add('hidden');
             sectionServices.classList.add('hidden');
+
+            const servicesPipeline = triggerSelect.value === 'tenant_services';
+            singleServicePanel.classList.toggle('hidden', !servicesPipeline);
+            if (!servicesPipeline) {
+                singleServiceDeploy.checked = false;
+                singleServiceRow.classList.add('hidden');
+            }
 
             if (taintCheckbox.checked && triggerSelect.value) {
                 dynamicContainer.classList.remove('hidden');
@@ -358,11 +407,14 @@
             });
         }
 
+        const allowProd = document.getElementById('allowProd');
+
         function updateProdControls() {
             const isProd = targetEnv.value === 'prod';
+            const shipping = isProd && allowProd.checked;
             prodPanel.classList.toggle('hidden', !isProd);
-            crRow.classList.toggle('hidden', !isProd);
-            crNumber.required = isProd;
+            crRow.classList.toggle('hidden', !shipping);
+            crNumber.required = shipping;
             paintEnv();
         }
 
@@ -374,7 +426,114 @@
         });
 
         targetEnv.addEventListener('change', updateProdControls);
+        allowProd.addEventListener('change', updateProdControls);
         updateProdControls();
+
+        const MAX_TENANTS = 20;
+        const selectedTenants = new Set();
+        let tenantCatalog = [];
+        const tenantPicker = document.getElementById('tenantPicker');
+        const tenantMenu = document.getElementById('tenantMenu');
+        const tenantOptions = document.getElementById('tenantOptions');
+        const tenantFilter = document.getElementById('tenantFilter');
+        const tenantHelp = document.getElementById('tenantHelp');
+        const tenantPickerText = document.getElementById('tenantPickerText');
+
+        function updateTenantPicker() {
+            const count = selectedTenants.size;
+            if (count === 0) {
+                tenantPickerText.textContent = 'All tenants';
+                tenantPickerText.classList.add('text-stone-900');
+                tenantPickerText.classList.remove('text-stone-500');
+            } else if (count === 1) {
+                tenantPickerText.textContent = selectedTenants.values().next().value;
+                tenantPickerText.classList.remove('text-stone-500');
+                tenantPickerText.classList.add('text-stone-900');
+            } else {
+                tenantPickerText.textContent = count + ' tenants selected';
+                tenantPickerText.classList.remove('text-stone-500');
+                tenantPickerText.classList.add('text-stone-900');
+            }
+        }
+
+        function renderTenantOptions() {
+            const filter = tenantFilter.value.trim().toLowerCase();
+            tenantOptions.replaceChildren();
+            const groups = new Map();
+            tenantCatalog.forEach(path => {
+                if (filter && !path.toLowerCase().includes(filter)) return;
+                const parts = path.split('/');
+                const groupName = parts.length > 1 ? parts.slice(0, -1).join(' / ') : 'tenants';
+                const mark = parts[parts.length - 1];
+                if (!groups.has(groupName)) groups.set(groupName, []);
+                groups.get(groupName).push({ path, mark });
+            });
+            if (groups.size === 0) {
+                const empty = document.createElement('p');
+                empty.className = 'text-sm text-stone-500';
+                empty.textContent = tenantCatalog.length ? 'No tenants match that filter.' : 'No tenants are in the GitLab tenants group.';
+                tenantOptions.appendChild(empty);
+                return;
+            }
+            groups.forEach((marks, groupName) => {
+                const section = document.createElement('section');
+                const heading = document.createElement('p');
+                heading.className = 'text-xs font-medium uppercase tracking-wide text-stone-500';
+                heading.textContent = groupName;
+                section.appendChild(heading);
+                const list = document.createElement('div');
+                list.className = 'mt-1 space-y-1';
+                marks.forEach(item => {
+                    const label = document.createElement('label');
+                    label.className = 'flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-stone-800 hover:bg-white';
+                    const input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.value = item.path;
+                    input.checked = selectedTenants.has(item.path);
+                    input.className = 'h-4 w-4 rounded border-stone-300 text-blue-700';
+                    input.addEventListener('change', () => {
+                        if (input.checked && selectedTenants.size >= MAX_TENANTS) {
+                            input.checked = false;
+                            tenantHelp.textContent = 'A release can include at most 20 tenants.';
+                            return;
+                        }
+                        if (input.checked) selectedTenants.add(item.path);
+                        else selectedTenants.delete(item.path);
+                        tenantHelp.textContent = 'Leave every box unchecked to release all tenants except the ones skipped for this environment. A hand-picked release can include at most 20.';
+                        updateTenantPicker();
+                    });
+                    const name = document.createElement('span');
+                    name.textContent = item.mark;
+                    label.appendChild(input);
+                    label.appendChild(name);
+                    list.appendChild(label);
+                });
+                section.appendChild(list);
+                tenantOptions.appendChild(section);
+            });
+        }
+
+        tenantPicker.addEventListener('click', () => {
+            const open = tenantMenu.classList.toggle('hidden');
+            tenantPicker.setAttribute('aria-expanded', open ? 'false' : 'true');
+            if (!open) tenantFilter.focus();
+        });
+        tenantFilter.addEventListener('input', renderTenantOptions);
+        tenantFilter.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') event.preventDefault();
+        });
+
+        fetch('/api/tenants').then(response => response.ok ? response.json() : null).then(data => {
+            const paths = data && Array.isArray(data.tenants) ? data.tenants : [];
+            tenantCatalog = paths
+                .map(item => item && typeof item.path === 'string' ? item.path : '')
+                .filter(Boolean);
+            if (!data) tenantHelp.textContent = 'GitLab did not return the tenant list.';
+            else tenantHelp.textContent = tenantCatalog.length + ' tenants. Leave them unchecked to release all except the ones skipped for this environment.';
+            renderTenantOptions();
+        }).catch(() => {
+            tenantHelp.textContent = 'GitLab did not return the tenant list.';
+        });
 
         document.getElementById('deployForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -382,12 +541,17 @@
             const payload = {
                 targetEnvironment: document.getElementById('targetEnv').value,
                 allowProd: document.getElementById('allowProd').checked,
-                tenantList: document.getElementById('tenantList').value,
+                tenantList: selectedTenants.size ? Array.from(selectedTenants).join(',') : '*',
                 pipelineTrigger: document.getElementById('pipelineTrigger').value,
-                taint: document.getElementById('taintFlag').checked
+                taint: document.getElementById('taintFlag').checked,
+                singleServiceDeploy: triggerSelect.value === 'tenant_services' && singleServiceDeploy.checked
             };
 
-            if (payload.targetEnvironment === 'prod') {
+            if (payload.singleServiceDeploy) {
+                payload.selectedService = selectedService.value;
+            }
+
+            if (payload.targetEnvironment === 'prod' && payload.allowProd) {
                 payload.crNumber = document.getElementById('crNumber').value.trim();
             }
 
@@ -434,15 +598,15 @@
                     showLoading('Pipeline #' + pipelineId + ' is ' + status + '.');
                 });
 
-                if (outcome === 'success') {
-                    hideLaunchPopup();
-                    playLaunch(pipelineId, data.orchestratorPipelinesUrl);
-                } else if (outcome === 'timeout') {
+                if (outcome === 'timeout') {
                     showResult('Pipeline #' + pipelineId + ' is still running. Check GitLab for the result.');
-                } else if (outcome === 'canceled') {
-                    showResult('Pipeline #' + pipelineId + ' was canceled.');
+                } else if (outcome.status === 'success') {
+                    hideLaunchPopup();
+                    playLaunch(pipelineId, data.orchestratorPipelinesUrl, summaryLine(outcome));
+                } else if (outcome.status === 'canceled') {
+                    showResult('Pipeline #' + pipelineId + ' was canceled.', { body: summaryLine(outcome) });
                 } else {
-                    showResult('Pipeline #' + pipelineId + ' failed.');
+                    showResult('Pipeline #' + pipelineId + ' failed.', { body: summaryLine(outcome) });
                 }
             } catch (err) {
                 console.error(err);
@@ -489,8 +653,7 @@
                 }
                 failures = 0;
                 const data = await res.json();
-                if (data.status === 'success') return 'success';
-                if (data.status === 'failed' || data.status === 'canceled' || data.status === 'skipped') return data.status;
+                if (data.status === 'success' || data.status === 'failed' || data.status === 'canceled' || data.status === 'skipped') return data;
                 if (data.status) onUpdate(data.status);
                 await new Promise(resolve => setTimeout(resolve, 3000));
             }
@@ -543,7 +706,15 @@
             if (event.key === 'Escape' && !launchPopup.classList.contains('hidden')) hideLaunchPopup();
         });
 
-        function playLaunch(pipelineId, pipelinesUrl) {
+        function summaryLine(data) {
+            const bits = [];
+            if (Number.isInteger(data.ran)) bits.push(data.ran + ' ran');
+            if (Number.isInteger(data.failed)) bits.push(data.failed + ' failed');
+            if (Array.isArray(data.skipped)) bits.push(data.skipped.length + ' skipped');
+            return bits.length ? bits.join(', ') + '.' : '';
+        }
+
+        function playLaunch(pipelineId, pipelinesUrl, summary) {
             const stage = document.getElementById('launchStage');
             const rocket = stage.querySelector('.rocket-flight');
             let finished = false;
@@ -553,6 +724,7 @@
                 stage.classList.add('hidden');
                 stage.classList.remove('is-launching', 'is-reduced');
                 showResult('Pipeline #' + pipelineId + ' ran successfully.', {
+                    body: summary || '',
                     history: true,
                     url: pipelinesUrl,
                 });

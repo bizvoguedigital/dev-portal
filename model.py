@@ -6,8 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Change-request ids such as CHG0012345 or CR-1024. First character is
 # alphanumeric so the value cannot be turned into a spreadsheet formula.
 _CR_NUMBER = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{2,31}")
-# Same shape the orchestrator accepts before it writes a YAML key.
-_TENANT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}")
+# One path segment, then up to five more. Flat names such as atlas still match.
+# CARs/Hyundai/kona is the nested shape under the tenants group.
+_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}"
+TENANT_PATH = re.compile(rf"{_SEGMENT}(?:/{_SEGMENT}){{0,5}}")
 # Terraform address. No quotes, spaces, or shell metacharacters.
 _RESOURCE = re.compile(r"[A-Za-z0-9_.\-\[\]]{1,128}")
 _STATE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -40,20 +42,40 @@ class DeploymentRequest(BaseModel):
     tfRefresh: Optional[bool] = None
     replaceState: Optional[str] = Field(default=None, max_length=64)
     services: Optional[List[str]] = None
-    # Required for prod. Ignored for every other environment.
+    # Off means every service. On requires one name from ALLOWED_SERVICES.
+    singleServiceDeploy: bool = False
+    selectedService: Optional[str] = Field(default=None, max_length=64)
+    # Required for a real prod ship. Ignored for every other environment.
     crNumber: Optional[str] = Field(default=None, max_length=32)
+    # Derived. Production with the confirmation off is plan-only.
+    dryRun: bool = False
 
     @model_validator(mode="after")
     def constrain_pipeline_inputs(self):
-        if self.targetEnvironment == "prod":
-            if not self.allowProd:
-                raise ValueError("Cannot deploy to Prod: 'Allow Prod Trigger' is not checked.")
+        if self.targetEnvironment == "prod" and not self.allowProd:
+            self.dryRun = True
+            self.crNumber = None
+        elif self.targetEnvironment == "prod":
+            self.dryRun = False
             cr = (self.crNumber or "").strip().upper()
             if not _CR_NUMBER.fullmatch(cr):
                 raise ValueError("Prod releases require a change request number (e.g. CHG0012345).")
             self.crNumber = cr
         else:
+            self.dryRun = False
             self.crNumber = None
+
+        self._constrain_single_service()
+
+        if self.tenantList.strip() == "*":
+            self.tenantList = "*"
+            if not self.taint:
+                self.replaceResource = None
+                self.tfRefresh = None
+                self.replaceState = None
+                self.services = None
+                return self
+            return self._constrain_taint()
 
         names: list[str] = []
         seen: set[str] = set()
@@ -61,8 +83,11 @@ class DeploymentRequest(BaseModel):
             name = raw.strip()
             if not name or name in seen:
                 continue
-            if not _TENANT.fullmatch(name):
-                raise ValueError("Tenant names must be letters, numbers, '_' or '-'.")
+            if not TENANT_PATH.fullmatch(name):
+                raise ValueError(
+                    "Each tenant is a path such as CARs/Hyundai/kona. "
+                    "Segments use letters, numbers, '_' or '-'."
+                )
             seen.add(name)
             names.append(name)
         if not names:
@@ -77,7 +102,19 @@ class DeploymentRequest(BaseModel):
             self.replaceState = None
             self.services = None
             return self
+        return self._constrain_taint()
 
+    def _constrain_single_service(self):
+        if self.pipelineTrigger != "tenant_services" or not self.singleServiceDeploy:
+            self.singleServiceDeploy = False
+            self.selectedService = None
+            return
+        service = (self.selectedService or "").strip()
+        if service not in _ALLOWED_SERVICES:
+            raise ValueError("Choose a service to deploy.")
+        self.selectedService = service
+
+    def _constrain_taint(self):
         if self.pipelineTrigger == "tenant_baseline":
             resource = (self.replaceResource or "").strip()
             if not _RESOURCE.fullmatch(resource):

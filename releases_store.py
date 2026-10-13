@@ -31,10 +31,13 @@ CREATE TABLE IF NOT EXISTS releases (
     gitlab_pipeline_id INTEGER,
     gitlab_web_url TEXT,
     pipeline_status TEXT,
+    skipped_tenants TEXT NOT NULL DEFAULT '',
+    dry_run INTEGER NOT NULL DEFAULT 0,
     CHECK (environment IN ('dev', 'test', 'preprod', 'prod')),
     CHECK (
-        (environment = 'prod' AND cr_number IS NOT NULL)
-        OR (environment != 'prod' AND cr_number IS NULL)
+        (environment = 'prod' AND dry_run = 0 AND cr_number IS NOT NULL)
+        OR (environment = 'prod' AND dry_run = 1 AND cr_number IS NULL)
+        OR (environment != 'prod' AND cr_number IS NULL AND dry_run = 0)
     )
 );
 CREATE INDEX IF NOT EXISTS idx_releases_env_time ON releases (environment, released_at);
@@ -112,6 +115,53 @@ class EnvironmentBusy(Exception):
         super().__init__(message)
 
 
+def _migrate_dry_run(conn: sqlite3.Connection) -> None:
+    """Rebuild the ledger so a production plan can be stored without a change request.
+
+    SQLite cannot change a CHECK in place. Existing rows are real releases, so
+    they copy across with dry_run left off.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE releases_next (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            released_at TEXT NOT NULL,
+            username TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            tenant_list TEXT NOT NULL,
+            pipeline_trigger TEXT NOT NULL,
+            taint INTEGER NOT NULL,
+            cr_number TEXT,
+            change_summary TEXT NOT NULL DEFAULT '',
+            gitlab_pipeline_id INTEGER,
+            gitlab_web_url TEXT,
+            pipeline_status TEXT,
+            skipped_tenants TEXT NOT NULL DEFAULT '',
+            dry_run INTEGER NOT NULL DEFAULT 0,
+            CHECK (environment IN ('dev', 'test', 'preprod', 'prod')),
+            CHECK (
+                (environment = 'prod' AND dry_run = 0 AND cr_number IS NOT NULL)
+                OR (environment = 'prod' AND dry_run = 1 AND cr_number IS NULL)
+                OR (environment != 'prod' AND cr_number IS NULL AND dry_run = 0)
+            )
+        );
+        INSERT INTO releases_next (
+            id, released_at, username, environment, tenant_list, pipeline_trigger,
+            taint, cr_number, change_summary, gitlab_pipeline_id, gitlab_web_url,
+            pipeline_status, skipped_tenants, dry_run
+        )
+        SELECT
+            id, released_at, username, environment, tenant_list, pipeline_trigger,
+            taint, cr_number, change_summary, gitlab_pipeline_id, gitlab_web_url,
+            pipeline_status, COALESCE(skipped_tenants, ''), 0
+        FROM releases;
+        DROP TABLE releases;
+        ALTER TABLE releases_next RENAME TO releases;
+        CREATE INDEX IF NOT EXISTS idx_releases_env_time ON releases (environment, released_at);
+        """
+    )
+
+
 def init_db(path: str | None = None) -> str:
     path = path or Config.RELEASES_DB_PATH
 
@@ -120,6 +170,10 @@ def init_db(path: str | None = None) -> str:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(releases)")}
         if "pipeline_status" not in columns:
             conn.execute("ALTER TABLE releases ADD COLUMN pipeline_status TEXT")
+        if "skipped_tenants" not in columns:
+            conn.execute("ALTER TABLE releases ADD COLUMN skipped_tenants TEXT NOT NULL DEFAULT ''")
+        if "dry_run" not in columns:
+            _migrate_dry_run(conn)
         conn.executescript(_LOCK_SCHEMA)
         lock_columns = {row[1] for row in conn.execute("PRAGMA table_info(environment_lock)")}
         if "reservation_token" not in lock_columns:
@@ -141,6 +195,8 @@ def record_release(
     gitlab_pipeline_id: int | None,
     gitlab_web_url: str | None,
     pipeline_status: str | None = None,
+    skipped_tenants: str = "",
+    dry_run: bool = False,
     released_at: str | None = None,
     path: str | None = None,
 ) -> int:
@@ -155,6 +211,8 @@ def record_release(
         gitlab_pipeline_id=gitlab_pipeline_id,
         gitlab_web_url=gitlab_web_url,
         pipeline_status=pipeline_status,
+        skipped_tenants=skipped_tenants,
+        dry_run=dry_run,
         released_at=released_at,
     )
     path = init_db(path)
@@ -208,6 +266,8 @@ def import_sample_releases(fixture_path: str, path: str | None = None, now: date
                 gitlab_pipeline_id=int(item["gitlabPipelineId"]),
                 gitlab_web_url=None,
                 pipeline_status=None,
+                skipped_tenants="",
+                dry_run=False,
                 released_at=released_at,
             )
         )
@@ -232,8 +292,9 @@ def import_sample_releases(fixture_path: str, path: str | None = None, now: date
 _INSERT_SQL = """
 INSERT INTO releases (
     released_at, username, environment, tenant_list, pipeline_trigger,
-    taint, cr_number, change_summary, gitlab_pipeline_id, gitlab_web_url, pipeline_status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    taint, cr_number, change_summary, gitlab_pipeline_id, gitlab_web_url,
+    pipeline_status, skipped_tenants, dry_run
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -249,13 +310,18 @@ def _normalize_row(
     gitlab_pipeline_id: int | None,
     gitlab_web_url: str | None,
     pipeline_status: str | None,
+    skipped_tenants: str,
+    dry_run: bool,
     released_at: str | None,
 ) -> dict:
-    if environment == "prod":
+    if environment == "prod" and dry_run:
+        cr_number = None
+    elif environment == "prod":
         if not cr_number:
             raise ValueError("A production release requires a change request number.")
     else:
         cr_number = None
+        dry_run = False
     return {
         "released_at": _utc_timestamp(released_at),
         "username": username,
@@ -268,6 +334,8 @@ def _normalize_row(
         "gitlab_pipeline_id": gitlab_pipeline_id,
         "gitlab_web_url": _safe_gitlab_url(gitlab_web_url),
         "pipeline_status": pipeline_status,
+        "skipped_tenants": skipped_tenants or "",
+        "dry_run": 1 if dry_run else 0,
     }
 
 
@@ -284,6 +352,8 @@ def _insert_params(row: dict) -> tuple:
         row["gitlab_pipeline_id"],
         row["gitlab_web_url"],
         row["pipeline_status"],
+        row["skipped_tenants"],
+        row["dry_run"],
     )
 
 
@@ -315,6 +385,20 @@ def _utc_timestamp(value: str | None) -> str:
 def _read_text(path: str) -> str:
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+
+
+def skipped_tenants_for_pipeline(pipeline_id: int, path: str | None = None) -> str:
+    path = init_db(path)
+    row = _run(
+        path,
+        lambda conn: conn.execute(
+            "SELECT skipped_tenants FROM releases WHERE gitlab_pipeline_id = ?",
+            (pipeline_id,),
+        ).fetchone(),
+    )
+    if row is None:
+        return ""
+    return row["skipped_tenants"] or ""
 
 
 def portal_started_pipeline(pipeline_id: int, path: str | None = None) -> bool:
@@ -525,6 +609,7 @@ def _to_api(row: dict) -> dict:
         "pipelineTrigger": row["pipeline_trigger"],
         "taint": bool(row["taint"]),
         "crNumber": row["cr_number"],
+        "dryRun": bool(row["dry_run"]),
         "changeSummary": row["change_summary"],
         "gitlabPipelineId": row["gitlab_pipeline_id"],
         "gitlabWebUrl": row["gitlab_web_url"],

@@ -47,6 +47,17 @@ resource "gitlab_repository_file" "orchestrator_generator" {
   commit_message = "Add the downstream CI generator"
 }
 
+resource "gitlab_repository_file" "skip_tenants" {
+  project        = gitlab_project.orchestrator.id
+  file_path      = "scripts/skip-tenants.txt"
+  branch         = "main"
+  content        = file("${path.module}/pipeline/skip-tenants.txt")
+  encoding       = "text"
+  author_email   = "terraform@localhost"
+  author_name    = "Terraform"
+  commit_message = "Add the tenants a full release skips"
+}
+
 # Each tenant accepts a CI job token from tenant_orchestrator, which is what
 # the generated pipeline uses to start the downstream project.
 resource "gitlab_project_job_token_scope" "orchestrator_may_trigger" {
@@ -62,11 +73,26 @@ resource "gitlab_repository_file" "pipeline" {
   project        = each.value.id
   file_path      = ".gitlab-ci.yml"
   branch         = "main"
-  content        = file("${path.module}/pipeline/gitlab-ci.yml")
+  content        = file("${path.module}/pipeline/tenant-entry.yml")
   encoding       = "text"
   author_email   = "terraform@localhost"
   author_name    = "Terraform"
-  commit_message = "Add the shared tenant pipeline"
+  commit_message = "Point the tenant at the shared CI template"
+
+  depends_on = [gitlab_project.tenant, gitlab_repository_file.ci_template]
+}
+
+resource "gitlab_repository_file" "tenant_tfvars" {
+  for_each = gitlab_project.tenant
+
+  project        = each.value.id
+  file_path      = "terraform.tfvars"
+  branch         = "main"
+  content        = "tenant_name = \"${each.key}\"\ntenant_path = \"${each.key}\"\n"
+  encoding       = "text"
+  author_email   = "terraform@localhost"
+  author_name    = "Terraform"
+  commit_message = "Add ${each.key} terraform.tfvars"
 
   depends_on = [gitlab_project.tenant]
 }

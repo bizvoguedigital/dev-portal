@@ -12,6 +12,7 @@ portal:
   gitlab:
     baseUrl: https://gitlab.example.com
     projectId: root/tenant_orchestrator
+    tenantsGroup: tenants
     pipelinesUrl: https://gitlab.example.com/root/tenant_orchestrator/-/pipelines
 
 keycloak:

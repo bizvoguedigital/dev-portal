@@ -331,6 +331,7 @@
                 ['Tenants', release.tenantList],
             ];
             if (release.crNumber) fields.push(['Change request', release.crNumber]);
+            if (release.dryRun) fields.push(['Run', 'Dry run (terraform plan)']);
             if (release.changeSummary) fields.push(['Change', release.changeSummary]);
             const grid = document.createElement('dl');
             grid.className = 'grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3';
@@ -379,7 +380,7 @@
                 const cells = [
                     [release.dateUtc, 'px-4 py-3 whitespace-nowrap tabular-nums text-stone-700'],
                     [release.timeUtc, 'px-4 py-3 whitespace-nowrap tabular-nums text-stone-700'],
-                    [release.crNumber || '', 'px-4 py-3 whitespace-nowrap font-mono text-xs font-medium text-rose-700'],
+                    [release.dryRun ? 'Dry run' : (release.crNumber || ''), 'px-4 py-3 whitespace-nowrap font-mono text-xs font-medium text-rose-700'],
                     [release.tenantList, 'px-4 py-3 whitespace-nowrap text-stone-700'],
                     [TRIGGER_LABELS[release.pipelineTrigger] || release.pipelineTrigger, 'px-4 py-3 whitespace-nowrap text-stone-700'],
                     [release.changeSummary || '—', 'px-4 py-3 whitespace-nowrap text-stone-500'],

@@ -12,7 +12,9 @@ from pydantic import ValidationError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import Config, assert_runtime_config
+from gitlab_client import cicd_enabled
 from model import DeploymentRequest
+from skip_list import format_skipped, parse_skip_list, partition_tenants, read_skipped
 from releases_store import (
     EnvironmentBusy,
     clear_environment_lock,
@@ -76,6 +78,17 @@ class ReleaseLedgerTests(unittest.TestCase):
             crNumber="chg0012345",
         )
         self.assertEqual(accepted.crNumber, "CHG0012345")
+        self.assertFalse(accepted.dryRun)
+        planned = DeploymentRequest(
+            targetEnvironment="prod",
+            allowProd=False,
+            tenantList="tenant-a",
+            pipelineTrigger="tenant_baseline",
+            taint=False,
+            crNumber="CHG0012345",
+        )
+        self.assertTrue(planned.dryRun)
+        self.assertIsNone(planned.crNumber)
 
     def test_non_prod_discards_cr(self):
         accepted = DeploymentRequest(
@@ -92,6 +105,70 @@ class ReleaseLedgerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _release(self.path, environment="prod", username="prod-operator", cr_number=None)
         self.assertEqual(list_releases(self.path), [])
+
+    def test_prod_dry_run_is_stored_without_a_change_request(self):
+        release_id = _release(
+            self.path,
+            environment="prod",
+            username="prod-operator",
+            cr_number=None,
+            dry_run=True,
+            change_summary="terraform plan",
+        )
+        stored = list_releases(self.path)
+        self.assertEqual(stored[0]["id"], release_id)
+        self.assertTrue(stored[0]["dryRun"])
+        self.assertIsNone(stored[0]["crNumber"])
+        self.assertEqual(stored[0]["changeSummary"], "terraform plan")
+
+    def test_existing_ledger_gains_a_dry_run_column(self):
+        connection = sqlite3.connect(self.path)
+        connection.executescript(
+            """
+            CREATE TABLE releases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                released_at TEXT NOT NULL,
+                username TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                tenant_list TEXT NOT NULL,
+                pipeline_trigger TEXT NOT NULL,
+                taint INTEGER NOT NULL,
+                cr_number TEXT,
+                change_summary TEXT NOT NULL DEFAULT '',
+                gitlab_pipeline_id INTEGER,
+                gitlab_web_url TEXT,
+                pipeline_status TEXT,
+                skipped_tenants TEXT NOT NULL DEFAULT '',
+                CHECK (environment IN ('dev', 'test', 'preprod', 'prod')),
+                CHECK (
+                    (environment = 'prod' AND cr_number IS NOT NULL)
+                    OR (environment != 'prod' AND cr_number IS NULL)
+                )
+            );
+            INSERT INTO releases (
+                released_at, username, environment, tenant_list, pipeline_trigger,
+                taint, cr_number
+            ) VALUES (
+                '2026-01-01T00:00:00Z', 'op', 'prod', 'atlas', 'tenant_baseline', 0, 'CHG0012345'
+            );
+            """
+        )
+        connection.close()
+        _release(
+            self.path,
+            environment="prod",
+            username="planner",
+            tenant_list="atlas",
+            cr_number="CHG0000001",
+            dry_run=True,
+            gitlab_pipeline_id=12,
+        )
+        stored = list_releases(self.path)
+        self.assertEqual([row["username"] for row in stored], ["op", "planner"])
+        self.assertFalse(stored[0]["dryRun"])
+        self.assertEqual(stored[0]["crNumber"], "CHG0012345")
+        self.assertTrue(stored[1]["dryRun"])
+        self.assertIsNone(stored[1]["crNumber"])
 
     def test_audit_csv_is_prod_only(self):
         _release(self.path)
@@ -187,15 +264,16 @@ class ReleaseLedgerTests(unittest.TestCase):
                 taint=True,
                 services=["airflow", "$(id)"],
             )
-        with self.assertRaises(ValidationError):
-            DeploymentRequest(
-                targetEnvironment="prod",
-                allowProd=False,
-                tenantList="atlas",
-                pipelineTrigger="tenant_baseline",
-                taint=False,
-                crNumber="CHG0012345",
-            )
+        planned = DeploymentRequest(
+            targetEnvironment="prod",
+            allowProd=False,
+            tenantList="atlas",
+            pipelineTrigger="tenant_baseline",
+            taint=False,
+            crNumber="CHG0012345",
+        )
+        self.assertTrue(planned.dryRun)
+        self.assertIsNone(planned.crNumber)
         accepted = DeploymentRequest(
             targetEnvironment="dev",
             allowProd=False,
@@ -208,6 +286,93 @@ class ReleaseLedgerTests(unittest.TestCase):
         self.assertEqual(accepted.tenantList, "atlas,borealis")
         self.assertEqual(accepted.services, ["airflow"])
         self.assertIsNone(accepted.replaceResource)
+        everyone = DeploymentRequest(
+            targetEnvironment="dev",
+            allowProd=False,
+            tenantList=" * ",
+            pipelineTrigger="tenant_baseline",
+            taint=False,
+        )
+        self.assertEqual(everyone.tenantList, "*")
+        self.assertIsNone(everyone.selectedService)
+        with self.assertRaises(ValidationError):
+            DeploymentRequest(
+                targetEnvironment="dev",
+                allowProd=False,
+                tenantList="atlas",
+                pipelineTrigger="tenant_services",
+                taint=False,
+                singleServiceDeploy=True,
+            )
+        ignored = DeploymentRequest(
+            targetEnvironment="dev",
+            allowProd=False,
+            tenantList="atlas",
+            pipelineTrigger="tenant_baseline",
+            taint=False,
+            singleServiceDeploy=True,
+            selectedService="airflow",
+        )
+        self.assertFalse(ignored.singleServiceDeploy)
+        self.assertIsNone(ignored.selectedService)
+        one_service = DeploymentRequest(
+            targetEnvironment="dev",
+            allowProd=False,
+            tenantList="atlas",
+            pipelineTrigger="tenant_services",
+            taint=False,
+            singleServiceDeploy=True,
+            selectedService="airflow",
+        )
+        self.assertEqual(one_service.selectedService, "airflow")
+        cleared = DeploymentRequest(
+            targetEnvironment="dev",
+            allowProd=False,
+            tenantList="atlas",
+            pipelineTrigger="tenant_baseline",
+            taint=False,
+            singleServiceDeploy=False,
+            selectedService="airflow",
+        )
+        self.assertIsNone(cleared.selectedService)
+        nested = DeploymentRequest(
+            targetEnvironment="dev",
+            allowProd=False,
+            tenantList="CARs/Hyundai/kona, CARs/Toyota/camry, CARs/Hyundai/kona",
+            pipelineTrigger="tenant_baseline",
+            taint=False,
+        )
+        self.assertEqual(nested.tenantList, "CARs/Hyundai/kona,CARs/Toyota/camry")
+        for bad in ("CARs/../kona", "CARs//kona", "/CARs/Hyundai/kona", "CARs/Hyundai/kona/a/b/c/d"):
+            with self.assertRaises(ValidationError):
+                DeploymentRequest(
+                    targetEnvironment="dev",
+                    allowProd=False,
+                    tenantList=bad,
+                    pipelineTrigger="tenant_baseline",
+                    taint=False,
+                )
+
+    def test_full_release_skips_only_the_named_environment(self):
+        rules = parse_skip_list(
+            "\n".join(
+                [
+                    "# comment",
+                    "dev CARs/Broken/stall pipeline exits on purpose",
+                    "prod CARs/Broken/flat pipeline exits on purpose",
+                    "nope not-a-path ignored",
+                ]
+            )
+        )
+        running, skipped = partition_tenants(
+            ["CARs/Audi/a4", "CARs/Broken/stall", "CARs/Broken/flat"],
+            rules["dev"],
+        )
+        self.assertEqual(running, ["CARs/Audi/a4", "CARs/Broken/flat"])
+        self.assertEqual(skipped, [("CARs/Broken/stall", "pipeline exits on purpose")])
+        self.assertEqual(read_skipped(format_skipped(skipped)), [
+            {"path": "CARs/Broken/stall", "reason": "pipeline exits on purpose"},
+        ])
 
     def test_https_refuses_the_default_session_secret(self):
         saved = (
@@ -251,6 +416,18 @@ class ReleaseLedgerTests(unittest.TestCase):
         dev_rows = [row for row in releases if row["environment"] == "dev"]
         self.assertTrue(dev_rows)
         self.assertTrue(all(row["crNumber"] is None for row in dev_rows))
+
+
+class CicdFilterTests(unittest.TestCase):
+    def test_disabled_cicd_is_left_out(self):
+        self.assertFalse(cicd_enabled({"builds_access_level": "disabled"}))
+        self.assertFalse(cicd_enabled({"jobs_enabled": False}))
+
+    def test_enabled_cicd_stays(self):
+        self.assertTrue(cicd_enabled({"builds_access_level": "enabled"}))
+        self.assertTrue(cicd_enabled({"builds_access_level": "private"}))
+        self.assertTrue(cicd_enabled({"jobs_enabled": True}))
+        self.assertTrue(cicd_enabled({}))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+# Full releases skip these paths. A tenant chosen by hand still runs.
+# environment path reason
+dev CARs/Broken/stall pipeline exits on purpose
+dev CARs/Broken/flat pipeline exits on purpose
+test CARs/Broken/stall pipeline exits on purpose
+test CARs/Broken/flat pipeline exits on purpose
+preprod CARs/Broken/stall pipeline exits on purpose
+preprod CARs/Broken/flat pipeline exits on purpose
+prod CARs/Broken/stall pipeline exits on purpose
+prod CARs/Broken/flat pipeline exits on purpose

@@ -1,0 +1,25 @@
+# Prints the variables forwarded from the tenant pipeline.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: never
+    - when: always
+
+baseline:
+  image: alpine:3.20
+  script:
+    - echo "Ops/tenant_baseline for ${TENANT_PROJECT_PATH}"
+    - echo "TARGET_ENV=${TARGET_ENV}"
+    - echo "TENANT_LIST=${TENANT_LIST}"
+    - echo "DEPLOY_ALL=${DEPLOY_ALL}"
+    - echo "PIPELINE_TRIGGER=${PIPELINE_TRIGGER}"
+    - echo "TAINT=${TAINT}"
+    - echo "TRIGGERED_BY=${TRIGGERED_BY}"
+    - echo "CR_NUMBER=${CR_NUMBER}"
+    - echo "DRY_RUN=${DRY_RUN}"
+    - echo "REPLACE_RESOURCE=${REPLACE_RESOURCE}"
+    - echo "TF_REFRESH=${TF_REFRESH}"
+    - echo "REPLACE_STATE=${REPLACE_STATE}"
+    - echo "SERVICES_LIST=${SERVICES_LIST}"
+    - echo "SINGLE_SERVICE_DEPLOY=${SINGLE_SERVICE_DEPLOY}"
+    - echo "SELECTED_SERVICE=${SELECTED_SERVICE}"
