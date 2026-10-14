@@ -10,6 +10,7 @@ Operators sign in with Keycloak and start a tenant release. The portal records w
 | [docs/tutorial.md](docs/tutorial.md) | How a click becomes tenant jobs, and where each rule lives |
 | [docs/architecture.md](docs/architecture.md) | End-to-end picture: local wiring, sequence, variables, ledger |
 | [docs/eks.md](docs/eks.md) | Helm install on EKS through the existing Istio gateway |
+| [docs/mac-runbook.md](docs/mac-runbook.md) | Step-by-step local setup on a Mac |
 
 ## Run locally
 
@@ -29,8 +30,8 @@ Ledger tests:
 python -m unittest tests.test_releases_store -v
 ```
 
-Login and header checks against a running stack:
+Login and header checks against a running stack. This script runs on macOS and Linux:
 
-```powershell
-powershell -File ./tests/test-security-hardening.ps1
+```bash
+bash ./tests/test-security-hardening.sh
 ```
